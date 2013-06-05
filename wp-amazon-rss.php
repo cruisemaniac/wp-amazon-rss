@@ -233,11 +233,12 @@ function wparf_pull_rss_feed_and_post_all() {
 	
 	if(empty($freq)) $freq = 'daily';
 
-	for($n = 0; $n < count($maxfeeds); $n++) {
+	for($n = 0; $n < count($amazonfeeds); $n++) {
 		$feed = '';
 		$cats = array();
 		$feed = $amazonfeeds[$n]['feedurl'];
 		$cats = $amazonfeeds[$n]['cats'];
+		echo '<h4>Pulling feed: '.$feed.'</h4>';
 		if(!empty($feed)) {
 			wparf_pull_rss_feeds_and_post($feed, $cats, $maxexcerptlength, $freq);
 		}
@@ -272,7 +273,7 @@ function wparf_pull_rss_feeds_and_post($feed, $cats, $maxexcerptlength, $freq) {
 	$excerpt = '';
 	foreach($items as $item) {
 	
-		$post_content.= '<div class="singleitem">'; 
+		$post_content.= '<div class="singleitem">';
 		$itemtitle =  $item->get_title();
 		$itempermalink = $item->get_permalink();
 		$itemdescription = $item->get_description().'<br />';
