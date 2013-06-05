@@ -21,6 +21,9 @@ function wparf_admin_actions() {
 					 'wparf_feed_options', 'wparf_admin_menu');
 }
 
+//add action hook for pulling rss feed
+add_action('wparf_pull_rss_and_post', 'wparf_pull_rss_feed_and_post_all');
+
 //render the admin menu for plugin
 function wparf_admin_menu() {
 
@@ -58,6 +61,12 @@ function wparf_admin_menu() {
 	if($maxexcerptlength > 300 || $maxexcerptlength < 50) $maxexcerptlength = 100;
 	
 	if(empty($freq)) $freq = 'daily';
+	
+	if(array_key_exists('wparf_add_posts_now', $_GET)) {
+		echo '<h3>Fetching RSS Feeds Now</h3>';
+		wparf_pull_rss_feed_and_post_all();
+		echo '<h3>Fetching RSS Feeds Done!</h3>';
+	}
 	
 	//lets sort out the saving routine first...
 	
@@ -146,14 +155,13 @@ function wparf_admin_menu() {
 			<?php
 			
 			//run the loop to show saved feeds from the wp_options table.
-			var_dump($maxfeeds);
+
 			for($n = 0; $n < $maxfeeds; $n++) {
 				$feed = '';
 				$cats = array();
 				
 				if($n < count($amazonfeeds)) {
 					$feed = $amazonfeeds[$n]['feedurl'];
-					var_dump($feed);					
 					$cats = $amazonfeeds[$n]['cats'];
 				}
 				
@@ -188,22 +196,66 @@ function wparf_admin_menu() {
 				<input type="submit" class="button-primary" value="<?php _e('Save Changes'); ?>" name="Submit" />
 			</p>
 		</form>
+		<p><strong>Please save changes to URLs and settings before clicking the links below!</strong></p>
+		<p><a href="<?php echo $_SERVER["REQUEST_URI"]; ?>&wparf_add_posts_now=true">Pull RSS Feeds and Create Posts <strong>NOW!</strong></a></p>
+		<p><a href="<?php echo $_SERVER["REQUEST_URI"]; ?>&wparf_clear_cron=true">Pause Automatic Posting</a></p>
+		<p><a href="<?php echo $_SERVER["REQUEST_URI"]; ?>&wparf_restart_cron=true">Resume Cron job for automatic Posting</a></p>
 		
 	</div>
 <?php
 }
 
 
+// function to pull from wp_options and set out feeds to post
+
+function wparf_pull_rss_feed_and_post_all() {
+	$wpoption_name = 'wparf_options';	
+	$options = get_option($wpoption_name);
+	
+	if($options == null) {
+		$options = array();
+	}
+	
+	$amazonfeeds = array(); // list of feeds from the options array	
+	$maxfeeds = ''; // maximum number of items we want to draw into a single post from a feed url
+	$maxexcerptlength = ''; //if excerpt exists, the maximum length we will show from the excerpt tag in the feed
+	$freq = ''; // frequency for executing the cron job to pull feeds
+	
+	if(array_key_exists('feeds', $options)) $amazonfeeds = $options['feeds'];
+	wparf_logger(print_r($amazonfeeds, true));
+	if(array_key_exists('maxfeeds', $options)) $maxfeeds = $options['maxfeeds'];
+	if(array_key_exists('maxlength', $options)) $maxexcerptlength = $options['maxlength'];
+	if(array_key_exists('freq', $options)) $freq = $options['freq'];
+	
+	if($maxfeeds > 50 || $maxfeeds < 3) $maxfeeds = 10;
+	
+	if($maxexcerptlength > 300 || $maxexcerptlength < 50) $maxexcerptlength = 100;
+	
+	if(empty($freq)) $freq = 'daily';
+
+	for($n = 0; $n < count($maxfeeds); $n++) {
+		$feed = '';
+		$cats = array();
+		$feed = $amazonfeeds[$n]['feedurl'];
+		$cats = $amazonfeeds[$n]['cats'];
+		if(!empty($feed)) {
+			wparf_pull_rss_feeds_and_post($feed, $cats, $maxexcerptlength, $freq);
+		}
+	}
+
+}
+
 //function to pull rss feeds
 
 //tested and works - todo: replace feed with variables to pull from options!
 
-function wparf_pull_rss_feeds() {
+function wparf_pull_rss_feeds_and_post($feed, $cats, $maxexcerptlength, $freq) {
+
 	include_once(ABSPATH . WPINC . '/feed.php');
-	
+	$post_title = '';
 	$items = '';
 	if(function_exists('fetch_feed')) {
-		$feed = fetch_feed('http://cruisemaniac.com/rss');
+		$feed = fetch_feed($feed);
 		
 		if(!is_wp_error($feed)) : $feed->init();
 		
@@ -212,13 +264,46 @@ function wparf_pull_rss_feeds() {
 		$feed->set_cache_duration(21600);
 		$limit = $feed->get_item_quantity(10);
 		$items = $feed->get_items(0, $limit);
+		$post_title = $feed->get_title().' for '.date('M d, Y');
 		endif;		
 	}
 	
+	$post_content = '<div class="feeditems">';
+	$excerpt = '';
 	foreach($items as $item) {
-		echo $item->get_title() .'<br />';
-		echo $item->get_permalink() . '<br />';
+	
+		$post_content.= '<div class="singleitem">'; 
+		$itemtitle =  $item->get_title();
+		$itempermalink = $item->get_permalink();
+		$itemdescription = $item->get_description().'<br />';
+		$excerpt = substr($itemdescription, 0, $maxexcerptlength-3).'...';
+		$itempubdate = '<small style="float: right;">'.$item->get_date().'</small>';
+		$post_content.= "<a href=\"$itempermalink\" target=\"_blank\">". $itemtitle.'</a><br />';
+		$post_content.= $itemdescription.$itempubdate;
+		$post_content.= '</div>';
 	}
+	$post_content.= '</div>';
+	
+	//post created. now to insert.
+	
+	$post = array(
+		'post_category' => $cats,
+		'post_content' => $post_content,
+		'post_date' => date('Y-m-d H:i:s',time()),
+		'post_excerpt' => $excerpt,
+		'post_status' => 'publish',
+		'post_title' => $post_title,
+		'post_type' => 'post',
+		);
+	$out = wp_insert_post($post);
+	
+	if(!$out) {
+		wp_die('An Error occurred while inserting the post');
+	}
+	else {
+		echo '<h3>Inserted post with title: '.$post_title.'</h3>';
+	}
+	
 }
 
 
