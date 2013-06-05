@@ -31,7 +31,6 @@ function wparf_admin_menu() {
 		wp_die('Access Denied');
 	}
 	
-	
 	//all settings and data in this page will be saved under key = wparf_options in the wp_options table
 	$wpoption_name = 'wparf_options';	
 	$options = get_option($wpoption_name);
@@ -63,10 +62,22 @@ function wparf_admin_menu() {
 	if(empty($freq)) $freq = 'daily';
 	
 	if(array_key_exists('wparf_add_posts_now', $_GET)) {
+	
 		echo '<h3>Fetching RSS Feeds Now</h3>';
 		wparf_pull_rss_feed_and_post_all();
 		echo '<h3>Fetching RSS Feeds Done!</h3>';
 	}
+	
+	if(array_key_exists('wparf_clear_cron', $_GET)) {
+		wp_clear_scheduled_hook('wparf_pull_rss_and_post');
+		echo '<h3>The cron job has been cleared! Feeds will no longer be processed and posted on your blog!</h3>';
+	}
+	
+	if(array_key_exists('wparf_restart_cron', $_GET)) {
+		wp_schedule_event(strtotime('tomorrow + 6 hours'), $freq, 'wparf_pull_rss_and_post');
+		echo '<h3>A cron job has been added! Feeds will be processed and posted on your blog at 6AM local time!</h3>';
+	}	
+	
 	
 	//lets sort out the saving routine first...
 	
@@ -74,7 +85,14 @@ function wparf_admin_menu() {
 		
 		wparf_logger('inside post');
 		
-		//todo: add cronjob functionality here
+		//first kick out the cron entries
+		$timestamp = wp_next_scheduled('wparf_pull_rss_and_post');
+		wp_unschedule_event($timestamp, 'wparf_pull_rss_and_post');
+		$timestamp = wp_next_scheduled('wparf_pull_rss_and_post');
+		wp_unschedule_event($timestamp, 'wparf_pull_rss_and_post');
+
+		if (!empty($timestamp)) wp_unschedule_event($timestamp, 'wparf_pull_rss_and_post');		
+
 		
 		$feedurls = array();
 		$categories = array();
@@ -84,7 +102,7 @@ function wparf_admin_menu() {
 		if(array_key_exists('wparf_feedurl', $_POST)) $feedurls = $_POST['wparf_feedurl'];
 		if(array_key_exists('wparf_feedcats', $_POST)) $categories = $_POST['wparf_feedcats'];
 		
-		$rssfeeeds = array();
+		$rssfeeds = array();
 		
 		//now the loop to set the payload into an array and push it into the wp_options table
 		$k = 0; // separate counter variable to save data sequentially no matter how many urls are entered in what position
@@ -111,8 +129,10 @@ function wparf_admin_menu() {
 		
 		update_option($wpoption_name, $options); //saving the settings to wp_options table
 		
-		echo '<h3>Save successful</h3>';
+		if(count($rssfeeds) > 0) wp_schedule_event(strtotime('tomorrow + 6 hours'), $freq, 'wparf_pull_rss_and_post');
 		
+		echo '<h3>Save successful</h3>';
+		echo '<h4>A Cronjob has been setup to fetch and publish posts at 6AM local time tomorrow</h4>';		
 	
 
 	}
@@ -248,8 +268,6 @@ function wparf_pull_rss_feed_and_post_all() {
 
 //function to pull rss feeds
 
-//tested and works - todo: replace feed with variables to pull from options!
-
 function wparf_pull_rss_feeds_and_post($feed, $cats, $maxexcerptlength, $freq) {
 
 	include_once(ABSPATH . WPINC . '/feed.php');
@@ -312,8 +330,28 @@ function wparf_pull_rss_feeds_and_post($feed, $cats, $maxexcerptlength, $freq) {
 
 /* 
  * wparf_plugin_uninstall
- * todo: implementation
+ * remove all cron registered activity
  */
+ 
+if(function_exists('register_uninstall_hook')) {
+	register_uninstall_hook(__FILE__, 'wparf_plugin_uninstall');
+}
+
+function wparf_plugin_uninstall() {
+	if(!current_user_can('manage_options')) {
+		wp_die('An Error Occurred while attempting this operation! Please contact the site administrator!');
+	}
+	
+	$timestamp = wp_next_scheduled('wparf_pull_rss_and_post');
+	wp_unschedule_event($timestamp, 'wparf_pull_rss_and_post');
+	$timestamp = wp_next_scheduled('wparf_pull_rss_and_post');
+	wp_unschedule_event($timestamp, 'wparf_pull_rss_and_post');
+	wp_clear_scheduled_hook('wparf_pull_rss_and_post');
+	
+	delete_option('wparf_options');
+	
+	return;
+}
  
 
 // development logger. set debug = true to have log files written to disk.
